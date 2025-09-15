@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast, no_type_check
 
 import h5py
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import openslide
@@ -12,6 +13,7 @@ from jaxtyping import Float, Integer
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
+from packaging.version import Version
 from PIL import Image
 from torch import Tensor
 from torch.func import jacrev  # pyright: ignore[reportPrivateImportUsage]
@@ -22,11 +24,206 @@ from stamp.modeling.vision_transformer import VisionTransformer
 from stamp.preprocessing import supported_extensions
 from stamp.preprocessing.tiling import get_slide_mpp_
 from stamp.types import DeviceLikeType, Microns, SlideMPP, TilePixels
-from packaging.version import Version
-
 
 _logger = logging.getLogger("stamp")
 
+
+def sinh_arcsinh_transform(
+    values: torch.Tensor,
+    epsilon: float = 0.0,  # skewness
+    delta: float = 1.0,  # tail weight (>0)
+) -> torch.Tensor:
+    """
+    Sinh–Arcsinh transformation (Jones & Pewsey, 2009).
+
+    Args:
+        values: Input tensor.
+        epsilon: Skewness parameter.
+        delta: Tail weight parameter (>0).
+
+    Returns:
+        Transformed tensor (same shape as input).
+    """
+    return torch.sinh(delta * torch.arcsinh(values) - epsilon)
+
+
+def _normalize_gradcam_log(
+    values: torch.Tensor,
+    clamp_percent: float | None = None,  # set None to disable clamping
+    remap: bool = False,  # if True → min–max after transform
+    mode: str = "log",  # "log" | "symlog"
+    scale: float = 1.0,  # only used for symlog
+) -> torch.Tensor:
+    """
+    Global log scaling for Grad-CAM across all tiles+categories.
+
+    Args:
+        values: tensor [tile, category]
+        clamp_percent: optional percentile clamp (e.g. 1.0 → 1–99),
+                       or None for no clamping
+        remap: if True, min–max scale to [0,1]; if False, return transformed values
+        mode: "log" (sign*log1p) or "symlog" (normalized symmetric log in [-1,1])
+        scale: controls compression in symlog (higher = more compression)
+
+    Returns:
+        tensor with same shape as `values`
+    """
+    v = values.detach().cpu().numpy().reshape(-1)
+
+    # 1. transform
+    if mode == "log":
+        v = np.sign(v) * np.log1p(np.abs(v))
+    elif mode == "symlog":
+        v = np.sign(v) * np.log1p(scale * np.abs(v)) / np.log1p(scale)
+    else:
+        raise ValueError(f"Unknown mode {mode}, must be 'log' or 'symlog'")
+
+    # 2. optional clamp
+    if clamp_percent is not None and clamp_percent > 0:
+        lo = np.percentile(v, clamp_percent)
+        hi = np.percentile(v, 100.0 - clamp_percent)
+        v = np.clip(v, lo, hi)
+    else:
+        lo, hi = v.min(), v.max()
+
+    # 3. optional remap to [0,1]
+    if remap:
+        v = (v - lo) / (hi - lo + 1e-8)
+
+    v = v.reshape(values.shape)
+    return torch.from_numpy(v).to(values.device, dtype=values.dtype)
+
+
+def log_transform(values: torch.Tensor) -> torch.Tensor:
+    """sign(x) * log1p(|x|)"""
+    return torch.sign(values) * torch.log1p(values.abs())
+
+
+def boxcox_transform(values: torch.Tensor, lam: float = 0.0) -> torch.Tensor:
+    """
+    Box–Cox transform (requires values > 0).
+    """
+    if lam == 0:
+        return torch.log(values)
+    else:
+        return (values.pow(lam) - 1) / lam
+
+
+def symmetric_boxcox_transform(values: torch.Tensor, lam: float = 0.0) -> torch.Tensor:
+    """
+    Symmetric Box–Cox transform using sign(|x|).
+    """
+    abs_vals = values.abs() + 1e-8  # avoid 0 issues
+    if lam == 0:
+        out = torch.log(abs_vals)
+    else:
+        out = (abs_vals.pow(lam) - 1) / lam
+    return torch.sign(values) * out
+
+
+def yeojohnson_transform(values: torch.Tensor, lam: float = 0.0) -> torch.Tensor:
+    """
+    Yeo–Johnson transform (works for both positive and negative values).
+    """
+    pos = values >= 0
+    out = torch.zeros_like(values)
+
+    if lam == 0:
+        out[pos] = torch.log1p(values[pos])
+    else:
+        out[pos] = ((values[pos] + 1).pow(lam) - 1) / lam
+
+    if lam == 2:
+        out[~pos] = -torch.log1p(-values[~pos])
+    else:
+        out[~pos] = -(((-values[~pos] + 1).pow(2 - lam) - 1) / (2 - lam))
+
+    return out
+
+
+def mulaw_transform(values: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
+    """Mu-law companding: sign(x) * log1p(scale*|x|) / log1p(scale)"""
+    return (
+        torch.sign(values)
+        * torch.log1p(scale * values.abs())
+        / torch.log1p(torch.tensor(scale, dtype=values.dtype, device=values.device))
+    )
+
+
+def sqrt_transform(values: torch.Tensor) -> torch.Tensor:
+    """
+    Symmetric square-root transform.
+    """
+    return torch.sign(values) * torch.sqrt(values.abs())
+
+
+def webber_transform(values: torch.Tensor, C: float = -2.0) -> torch.Tensor:
+    """Webber 2012 symlog: sign(x) * log10(1 + |x| / 10^C)"""
+    return torch.sign(values) * torch.log10(1 + values.abs() / (10.0**C))
+
+
+def arcsinh_transform(values: torch.Tensor, alpha: float = 1.0) -> torch.Tensor:
+    """Arcsinh scaling: arcsinh(alpha * x)"""
+    return torch.arcsinh(alpha * values)
+
+
+def shifted_log_transform(values: torch.Tensor, alpha: float = 1.0) -> torch.Tensor:
+    """
+    Shifted symmetric log transform.
+
+    Args:
+        values: Input tensor.
+        alpha: Shift parameter (>0).
+
+    Returns:
+        Transformed tensor (same shape).
+    """
+    return torch.sign(values) * torch.log1p(alpha * values.abs())
+
+
+def normalize_gradcam(
+    values: torch.Tensor,
+    mode: str = "log",  # "log" | "mulaw" | "webber" | "arcsinh"
+    clamp_percent: float | None = None,
+    remap: bool = False,
+    scale: float = 10.0,  # for "mulaw"
+    C: float = -2.0,  # for "webber"
+    alpha: float = 1.0,  # for "arcsinh"
+) -> torch.Tensor:
+    """
+    Normalize Grad-CAM values with different symmetric log-like transforms.
+    """
+    v = values.detach().cpu().numpy().reshape(-1)
+
+    if mode == "log":
+        v = np.sign(v) * np.log1p(np.abs(v))
+
+    elif mode == "mulaw":
+        v = np.sign(v) * np.log1p(scale * np.abs(v)) / np.log1p(scale)
+
+    elif mode == "webber":
+        v = np.sign(v) * np.log10(1 + np.abs(v) / (10.0**C))
+
+    elif mode == "arcsinh":
+        v = np.arcsinh(alpha * v)
+
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    # clamp
+    if clamp_percent is not None and clamp_percent > 0:
+        lo = np.percentile(v, clamp_percent)
+        hi = np.percentile(v, 100.0 - clamp_percent)
+        v = np.clip(v, lo, hi)
+    else:
+        lo, hi = v.min(), v.max()
+
+    # optional remap
+    if remap:
+        v = (v - lo) / (hi - lo + 1e-8)
+
+    v = v.reshape(values.shape)
+    return torch.from_numpy(v).to(values.device, dtype=values.dtype)
 
 def _gradcam_per_category(
     model: VisionTransformer,
@@ -232,11 +429,11 @@ def heatmaps_(
         )
 
         # TODO: Update version when a newer model logic breaks heatmaps.
-        if Version(model.stamp_version) < Version("2.3.0"):
-            raise ValueError(
-                f"model has been built with stamp version {model.stamp_version} "
-                f"which is incompatible with the current version."
-            )
+        # if Version(model.stamp_version) < Version("2.3.0"):
+        #     raise ValueError(
+        #         f"model has been built with stamp version {model.stamp_version} "
+        #         f"which is incompatible with the current version."
+        #     )
 
         # Score for the entire slide
         slide_score = (
@@ -257,11 +454,12 @@ def heatmaps_(
             feats=feats,
             coords=coords_um,
         )  # shape: [tile, category]
+        gradcam = _normalize_gradcam_log(gradcam, clamp_percent=5.0)
         gradcam_2d = _vals_to_im(
             gradcam,
             coords_norm,
         ).detach()  # shape: [width, height, category]
-
+        # gradcam = normalize_gradcam(gradcam, clamp_percent=0.1, mode="log")
         scores = torch.softmax(
             model.vision_transformer.forward(
                 bags=feats.unsqueeze(-2),
@@ -270,6 +468,7 @@ def heatmaps_(
             ),
             dim=1,
         )  # shape: [tile, category]
+
         scores_2d = _vals_to_im(
             scores, coords_norm
         ).detach()  # shape: [width, height, category]
