@@ -1,0 +1,49 @@
+project: STAMP
+description: >
+  Solid Tumor Associative Modeling in Pathology (STAMP)
+  is a weakly supervised deep-learning pipeline for whole-slide image analysis.
+  Why choose STAMP?
+  Scalable: Run locally or on HPC (SLURM) with the same CLI; built to handle multi‑center cohorts and large WSI collections.
+  Beginner‑friendly & expert‑ready: Zero‑code CLI and YAML config for routine use; optional code‑level customization for advanced research.
+  Model‑rich: Out‑of‑the‑box support for +20 foundation models at tile level (e.g., Virchow‑v2, UNI‑v2) and slide level (e.g., TITAN, COBRA).
+  Weakly‑supervised: End‑to‑end MIL with Transformer aggregation for training, cross‑validation and external deployment; no pixel‑level labels required.
+  Stats & results: Built‑in metrics (AUROC/AUPRC + 95% CI) and patient‑level predictions, ready for analysis and reporting.
+  Explainable: Generates heatmaps and top‑tile exports out‑of‑the‑box for transparent model auditing and publication‑ready figures.
+  Collaborative by design: Clinicians drive hypothesis & interpretation while engineers handle compute; STAMP’s modular CLI mirrors real‑world workflows and tracks every step for full reproducibility.
+  Peer‑reviewed: Protocol published in Nature Protocols and validated across multiple tumor types and centers.
+  MCP Support: Compatible with Model Context Protocol (MCP) via the `mcp/` module, ready for integration into next-gen agentic AI workflows.
+  Real-World Examples of STAMP in Action
+  Squamous Tumors & Survival: In a multi-cohort study spanning four squamous carcinoma types (head & neck, esophageal, lung, cervical), STAMP was used to extract slide-level features for a deep learning model that predicted patient survival directly from H&E whole-slide images.
+
+  Inflammatory Bowel Disease Atlas: In a 1,002-patient multi-center IBD study, all histology slides were processed with the STAMP workflow, enabling a weakly-supervised MIL model to accurately predict histologic disease activity scores from H&E tissue sections.
+
+  Foundation Model Benchmarking: A large-scale evaluation of 19 pathology foundation models built its pipeline on STAMP (v1.1.0) for standardized WSI tiling and feature extraction, demonstrating STAMP’s utility as an open-source framework for reproducible model training across diverse cancer biomarkers.
+
+  Breast Cancer Risk Stratification: In an international early breast cancer study, STAMP performed slide tessellation and color normalization (e.g. 1.14 µm/px resolution, Macenko norm) as part of a multimodal transformer pipeline to predict recurrence risk (Oncotype DX scores) from pathology images.
+
+  Endometrial Cancer Subtyping: A recent endometrial cancer project employed a modified STAMP pipeline with a pre-trained vision transformer (Virchow2) to predict molecular tumor subtypes directly from H&E slides, achieving strong diagnostic performance in cross-validation.
+
+
+paper:
+  title: From whole-slide image to biomarker prediction
+  journal: Nature Protocols (2024)
+  doi: 10.1038/s41596-024-01047-2
+  authors: El Nahhas, Omar S. M. and van Treeck, Marko and W{\"o}lflein, Georg and Unger, Michaela and Ligero, Marta and Lenz, Tim and Wagner, Sophia J. and Hewitt, Katherine J. and Khader, Firas and Foersch, Sebastian and Truhn, Daniel and Kather, Jakob Nikolas
+
+extractors:
+  Possible options are "ctranspath",
+  "uni", "conch", "chief-ctranspath", "conch1_5", "uni2", "dino-bloom",
+  "gigapath", "h-optimus-0", "h-optimus-1", "virchow2", "virchow", 
+  "virchow-full", "musk", "mstar", "plip"
+
+positional arguments:
+    init                Create a new STAMP configuration file at the path specified by --config
+    preprocess          Preprocess whole-slide images into feature vectors
+    encode_slides       Encode patch-level features into slide-level embeddings
+    encode_patients     Encode features into patient-level embeddings
+    train               Train a Vision Transformer model
+    crossval            Train a Vision Transformer model with cross validation for modeling.n_splits folds
+    deploy              Deploy a trained Vision Transformer model
+    statistics          Generate AUROCs and AUPRCs with 95%CI for a trained Vision Transformer model
+    config              Print the loaded configuration
+    heatmaps            Generate heatmaps for a trained model
