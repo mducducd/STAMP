@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import re
 import xml.dom.minidom as minidom
 from collections.abc import Iterator
@@ -23,6 +24,7 @@ import numpy as np
 import numpy.typing as npt
 import openslide
 from PIL import Image
+from skimage.filters import threshold_otsu
 
 from stamp.types import (
     EXTENSION_TO_FORMAT,
@@ -464,10 +466,91 @@ def _extract_mpp_from_metadata(slide: openslide.AbstractSlide) -> SlideMPP | Non
             return None
         doc = minidom.parseString(xml_path)
         collection = doc.documentElement
-        images = collection.getElementsByTagName("Image")
+        images = collection.getElementsByTagName("Image")  # type: ignore
         pixels = images[0].getElementsByTagName("Pixels")
         mpp = float(pixels[0].getAttribute("PhysicalSizeX"))
     except Exception:
         _logger.exception("failed to extract MPP from image description")
         return None
     return SlideMPP(mpp)
+
+def select_channel_files(
+    folder: Path,
+    channel_order: list[str],
+    dapi_index: int,
+    exclude_bgsub: bool,
+) -> list[Path | None]:
+    """
+    Selects TIFF files for each channel in the specified order, with DAPI and bgsub logic.
+    If a channel is missing, None is inserted in its place.
+    """
+    all_tif_files = [
+        f
+        for f in os.listdir(folder)
+        if f.lower().endswith(".tif") and not f.startswith(".")
+    ]
+    if exclude_bgsub:
+        all_tif_files = [f for f in all_tif_files if "bgsub" not in f.lower()]
+
+    selected_files: list[Path | None] = []
+    for channel in channel_order:
+        channel_lower = channel.lower()
+        if channel_lower == "dapi":
+            dapi_files = sorted([f for f in all_tif_files if "dapi" in f.lower()])
+            if len(dapi_files) <= dapi_index:
+                logging.warning(
+                    f"Not enough DAPI files found in {folder} for index {dapi_index}. Inserting None."
+                )
+                selected_files.append(None)
+            else:
+                selected_files.append(folder / dapi_files[dapi_index])
+        else:
+            files = [f for f in all_tif_files if channel_lower in f.lower()]
+            if not files:
+                logging.warning(
+                    f"No file found for channel {channel} in {folder}. Inserting None."
+                )
+                selected_files.append(None)
+            else:
+                selected_files.append(folder / files[0])
+    return selected_files
+
+
+def threshold_dapi(image_path: Path) -> np.ndarray:
+    """
+    Threshold the DAPI image using Otsu's method.
+    Returns a boolean mask where foreground is True.
+    """
+    im = Image.open(image_path).convert("L")
+    arr = np.array(im)
+    thresh = threshold_otsu(arr)
+    mask = arr > thresh  # foreground: True, background: False
+    return mask
+
+
+def apply_mask_to_channels(
+    channel_files: list[Path], mask: np.ndarray
+) -> dict[str, np.ndarray]:
+    result = {}
+    for channel_file in channel_files:
+        im = Image.open(channel_file)
+        arr = np.array(im)
+        height, width = arr.shape[:2]
+        mask_resized = np.array(
+            Image.fromarray(mask).resize(
+                (width, height), resample=Image.Resampling.NEAREST
+            )
+        )
+        if arr.ndim == 3:
+            arr_masked = arr * mask_resized[..., None]
+        else:
+            arr_masked = arr * mask_resized
+        result[channel_file.name] = arr_masked
+    return result
+
+
+def get_dapi_file(files: list[Path]) -> Path | None:
+    for f in files:
+        if "dapi" in f.name.lower():
+            return f
+    return None

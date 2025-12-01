@@ -2,6 +2,7 @@ docker-compose.yml
 Dockerfile
 /config.yaml
 *.bin
+notebooks
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
