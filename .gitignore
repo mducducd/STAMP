@@ -57,6 +57,11 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+notebooks/temp/
+notebooks/model_assets/
+/mnt/bulk-neptune/nguyenmin/stamp-dev/laura-multiplex/STAMP/notebooks/data/
+notebooks/exp/
+
 
 # Translations
 *.mo

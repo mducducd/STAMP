@@ -63,6 +63,3 @@ class PreprocessingConfig(BaseModel, arbitrary_types_allowed=True):
     will be rejected.
     If set to `None`, brightness-based rejection is disabled.
     """
-    channel_order: list[str]
-    dapi_index: int
-    exclude_bgsub: bool = True

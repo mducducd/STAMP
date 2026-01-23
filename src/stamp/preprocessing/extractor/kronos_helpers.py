@@ -40,11 +40,7 @@ Kronos feature extractor wrapper for STAMP.
 Integrates the pretrained Kronos ViT-S16 model into the STAMP Extractor interface.
 """
 
-from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
-
 import torch
-from PIL import Image
 from torch import nn
 from torchvision import transforms
 

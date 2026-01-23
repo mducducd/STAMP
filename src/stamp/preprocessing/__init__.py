@@ -124,9 +124,6 @@ def extract_(
     wsi_dir: Path,
     output_dir: Path,
     wsi_list: Path | None,
-    channel_order: list[str],
-    dapi_index: int,
-    exclude_bgsub: bool = True,
     cache_dir: Path | None,
     cache_tiles_ext: ImageExtension,
     extractor: ExtractorName | Extractor,
@@ -291,32 +288,6 @@ def extract_(
 
         feature_output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # sample_folder = slide_path.parent
-        # selected_files = select_channel_files(
-        #     folder=sample_folder,
-        #     channel_order=channel_order,
-        #     dapi_index=dapi_index,
-        #     exclude_bgsub=exclude_bgsub,
-        # )
-        # dapi_file = get_dapi_file([f for f in selected_files if f is not None])
-        # mask = None
-        # if dapi_file is not None and dapi_file.exists():
-        #     mask = threshold_dapi(dapi_file)
-
-        #     # Apply mask to all channels (including DAPI and others)
-        #     masked_channels = apply_mask_to_channels(
-        #         [f for f in selected_files if f is not None], mask
-        #     )
-        #     # Now masked_channels is a dict: {filename: masked_array}
-        #     # You can use these arrays for further processing or feature extraction
-
-        # # Check if this slide is one we actually want to process
-        # # Skip if it's not in our selected_files list
-        # if slide_path not in selected_files:
-        #     _logger.debug(f"Skipping {slide_path} - not in selected channel files")
-        #     print(f"Skipping {slide_path} - not in selected channel files")
-        #     continue
-
         try:
             ds = _TileDataset(
                 slide_path=slide_path,
@@ -448,4 +419,3 @@ def _get_slide_paths(wsi_list: Path) -> set[str]:
     else:
         raise ValueError(f"Unsupported file type: {suf}")
     return slide_paths
-

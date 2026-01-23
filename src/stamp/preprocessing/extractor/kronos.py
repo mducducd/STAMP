@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor, nn
+from torch import Tensor
 from torch.nn.init import trunc_normal_
 from torch.nn.utils import weight_norm
 from torchvision import transforms

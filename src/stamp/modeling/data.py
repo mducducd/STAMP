@@ -447,9 +447,12 @@ class BagDataset(Dataset[tuple[_Bag, _Coordinates, BagSize, _EncodedTarget]]):
         coords_um = []
         for bag_file in self.bags[index]:
             with h5py.File(bag_file, "r") as h5:
-                feats.append(
-                    torch.from_numpy(h5["feats"][:])  # pyright: ignore[reportIndexIssue]
-                )
+                if "feats" in h5:
+                    arr = h5["feats"][:]  # pyright: ignore[reportIndexIssue] # original STAMP files
+                else:
+                    arr = h5["patch_embeddings"][:]  # type: ignore # your Kronos files
+
+                feats.append(torch.from_numpy(arr))
                 coords_um.append(torch.from_numpy(get_coords(h5).coords_um))
 
         feats = torch.concat(feats).float()
@@ -530,6 +533,22 @@ class CoordsInfo:
 
 
 def get_coords(feature_h5: h5py.File) -> CoordsInfo:
+    # --- NEW: handle missing coords ----multiplex data bypass: no coords found; generated fake coords
+    if "coords" not in feature_h5:
+        feats_obj = feature_h5["patch_embeddings"]
+
+        if not isinstance(feats_obj, h5py.Dataset):
+            raise RuntimeError(
+                f"{feature_h5.filename}: expected 'feats' to be an HDF5 dataset but got {type(feats_obj)}"
+            )
+
+        n = feats_obj.shape[0]
+
+        coords_um = np.stack([np.arange(n), np.zeros(n)], axis=1).astype(np.float32)
+        tile_size_um = Microns(0.0)
+        tile_size_px = TilePixels(0)
+
+        return CoordsInfo(coords_um, tile_size_um, tile_size_px)
     coords: np.ndarray = feature_h5["coords"][:]  # type: ignore
     coords_um: np.ndarray | None = None
     tile_size_um: Microns | None = None
@@ -798,9 +817,14 @@ def filter_complete_patient_data_(
         )
     }
 
+    total_clini = len(patient_to_ground_truth)
+    total_slides = len(patient_to_slides)
+    final_patients = len(patients)
+
     _logger.info(
-        f"Kept {len(patient_to_ground_truth)}/{len(patient_to_ground_truth)} \
-        patients with complete data ({len(patient_to_ground_truth) / len(patient_to_ground_truth):.1%})."
+        f"Total patients in clinical table: {total_clini}\n"
+        f"Patients appearing in slide table: {total_slides}\n"
+        f"Final usable patients (complete data): {final_patients}\n"
     )
     return patients
 

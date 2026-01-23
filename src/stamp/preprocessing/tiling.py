@@ -474,6 +474,7 @@ def _extract_mpp_from_metadata(slide: openslide.AbstractSlide) -> SlideMPP | Non
         return None
     return SlideMPP(mpp)
 
+
 def select_channel_files(
     folder: Path,
     channel_order: list[str],
